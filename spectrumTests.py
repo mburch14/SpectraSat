@@ -18,8 +18,6 @@ exposureTime = 10000 #seconds
 AllData.clear()
 AllModels.clear()
 
-print('hello')
-
 '''
 arfname = cztDetector.gen_arf(energy_lo = cztDetector.energy_low, energy_hi = cztDetector.energy_high, arf="cubesat.arf")
 rspname =cztDetector.gen_rsp(arfname)
