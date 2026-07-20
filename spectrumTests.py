@@ -5,6 +5,8 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 import numpy as np
 import json
+import subprocess
+
 instrument = 'SWIFTBAT'
 
 with open("instrumentCharacteristics.json", "r") as file:
@@ -12,17 +14,18 @@ with open("instrumentCharacteristics.json", "r") as file:
 chars = jsons[instrument]
 
 #This is for our specific Cubesat
-orb = mc.Orbit(chars['altitude'], chars['inclination'])
+orb = mc.Orbit(chars["altitide"], chars['inclination'])
 geo = mc.geometry() #can also input chars['config']. I did not want to do that.
 mission1 = mc.Mission(instrument, chars['e_min'], chars['e_max'])
-cztDetector = mc.czt(geo, orb, mission1, res = chars["spec_resolution"], grad=chars["spec_gradient"])
+mask = mc.lead(chars['mask_thickness'])
+cztDetector = mc.czt(geometry=geo, orbit=orb, mission= mission1, optics= mask, res= chars["spec_resolution"], grad=chars["spec_gradient"])
 background = mc.CXB(detector=cztDetector)
 exposureTime = 10000 #seconds
 
 AllData.clear()
 AllModels.clear()
 
-'''
+#Generates the .arf and the .rsp file to be used by xspec. Then, generates a ASCII file for the background spectrum.
 arfname = cztDetector.gen_arf(energy_lo = cztDetector.energy_low, energy_hi = cztDetector.energy_high, arf=chars["arf_name"])
 rspname =cztDetector.gen_rsp(arfname, rsp = chars["rsp_name"])
 backgroundname = background.gen_spectrum_table()
@@ -35,24 +38,30 @@ m = Model("atable{cxb.mod}")
 fake = FakeitSettings(response= 'cubesat.rsp', exposure= exposureTime, fileName="simulated.pha")
 AllData.fakeit(1, fake)
 
+#Plot the counts/sec/keV of the model.
 AllData("simulated.pha")
 Plot.xAxis = "keV"
 Plot("data")
-energy = Plot.x()
-counts = Plot.y()
+energy = Plot.x() #Puts the x-axis in units keV, not channels.
+rsp = AllData(1).response
+elow = np.array(rsp.energLo)
+ehigh = np.array(rsp.energHi)
+dE = ehigh - elow
+counts = np.array(Plot.y())
+countRate = (counts / exposureTime) / dE #puts the y-axis in the correct units.
 errors = Plot.yErr()
-numcounts = np.array(counts) / exposureTime
+
 plt.figure(figsize=(8,5))
-plt.step(energy, numcounts, where="mid", color="black")
-plt.errorbar(energy, numcounts, yerr=np.array(errors)/exposureTime, fmt="none", color="black", alpha=0.5)
+plt.step(energy, countRate, where="mid", color="black")
+plt.errorbar(energy, countRate, yerr=np.array(errors)/exposureTime/dE, fmt="none", color="black", alpha=0.5)
 plt.xlabel("Energy (keV)")
-plt.ylabel("Count rate (counts/s/bin)")
+plt.ylabel("Count rate (counts/s/keV)")
 plt.yscale("log")
 plt.xscale('log')
 plt.title("Simulated CXB Spectrum")
 plt.savefig("simulated_spectrum.png", dpi=300, bbox_inches="tight")
 plt.close()
-'''
+
 
 '''
 #playing around and graphing the x-ray background.

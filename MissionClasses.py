@@ -55,7 +55,7 @@ class geometry:
         self.detthickness = settings["dett"] #thickness of the detector
         self.deth = settings["deth"] #from the bottom of the cubesat to the detector
 
-        #represented as a decimal between 0 and 1, where 1 is 100% transmission and 0 is 0% transmission, so far.
+        #represented as a decimal between 0 and 1, where 1 is 100% transmission and 0 is 0% transmission. This is the fraction of open slots in mask (Does not consider optics).
         self.imagTransmission = settings["imagTransmission"]
 
         #dimension of the cubesat in cm
@@ -71,7 +71,7 @@ class geometry:
         self.fov_sr = 4 * np.arcsin(np.sin(self.wfov / 2) * np.sin(self.lfov / 2))
 
         #collecting area in cm^2; assuming that the photons are othogonal to the detector. if not safe assumption, multiply by cos(theta).
-        self.collecting_area = self.detl * self.detw  * self.imagTransmission
+        self.collecting_area = self.imagTransmission * self.detl * self.detw
 
     def __str__(self):
         return f"This is a {(self.l* self.w* self.h)/1000}U cubesat with a {round(self.wfov, 2)} by {round(self.lfov, 2)} radian field of view and {self.imagTransmission*100}% transmission."
@@ -133,10 +133,11 @@ class ChargedParticles(BackgroundModel):
 
 
 class detector(ABC):
-    def __init__(self, geography, orbit, mission):
-        self.geos = geography
+    def __init__(self, geometry, orbit, mission, optics):
+        self.geos = geometry
         self.orbs = orbit
         self.missions = mission
+        self.optics = optics
         self.energy_edges = np.linspace(self.missions.energymin, self.missions.energymax, self.missions.energymax-self.missions.energymin+1)   #1 keV bins
         self.energy_low = self.energy_edges[:-1] #zeroth element to second-to-last element
         self.energy_high = self.energy_edges[1:] #first element to last element
@@ -200,13 +201,17 @@ class detector(ABC):
 
 
 class czt(detector):
-    def __init__(self, geography, orbit, mission, res = 6.63e3, grad = 0):
-        super().__init__(geography, orbit, mission)
+    def __init__(self, geometry, orbit, mission, optics, res = 6.63e3, grad = 0):
+        super().__init__(geometry, orbit, mission, optics)
         self.res = res
         self.grad = grad
 
     def effective_area(self, energy):
-        #Energy in kev. xraydb.mu_elam takes energy in eV, so we multiply by 1000 to convert from keV to eV.
+
+        #Add in the likelihood that some photons may be transmitted through the mask.
+        acoll = self.geos.collecting_area
+        if self.optics.mask == True:
+            acoll += self.optics.attenuation(energy) * (1 - self.geos.imagTransmission) * self.geos.detl * self.geos.detw
         
         #soft energy cutoff
         if energy < 1:
@@ -217,26 +222,53 @@ class czt(detector):
         w_Zn = 0.028
         w_Te = 0.547
 
-        #density of CdZnTe is 5.78 g/cm^3.
+        #density of CdZnTe is 5.78 g/cm^3. (NIST XCOM)
         density = 5.78 #g/cm^3
+
+        #Energy in kev. xraydb.mu_elam takes energy in eV, so we multiply by 1000 to convert from keV to eV.
         atten_const = (w_Cd * xraydb.mu_elam('Cd', energy*1000) + w_Zn * xraydb.mu_elam('Zn', energy*1000) + w_Te * xraydb.mu_elam('Te', energy*1000))*density
-        return self.geos.collecting_area * (1-np.exp(-atten_const * self.geos.detthickness * 0.1)) #The 0.1 is to convert from mm to cm, since the thickness is in mm and the attenuation constant is in cm^-1.
+        return acoll * (1-np.exp(-atten_const * self.geos.detthickness * 0.1)) #The 0.1 is to convert from mm to cm, since the thickness is in mm and the attenuation constant is in cm^-1.
 
 class silicon (detector):
-    def __init__(self, geography, orbit, mission, res = 120, grad = 0):
-        super().__init__(geography, orbit, mission)
+    def __init__(self, geometry, orbit, mission, optics, res = 120, grad = 0):
+        super().__init__(geometry, orbit, mission, optics)
         self.res = res
         self.grad = grad
 
     def effective_area(self, energy):
 
+        #Add in the likelihood that some photons may be transmitted through the mask.
+        acoll = self.geos.collecting_area
+        if self.optics.mask == True:
+            acoll += self.optics.attenuation(energy) * (1 - self.geos.imagTransmission) * self.geos.detl * self.geos.detw
+
         #soft energy cutoff
         if energy < 1:
             return 0
 
-        #Energy in keV. xraydb.mu_elam takes energy in eV, so we multiply by 1000 to convert from keV to eV.
-        #density of silicon is 2.33 g/cm^3.
+        #density of silicon is 2.33 g/cm^3. (NIST XCOM)
         density = 2.33 #g/cm^3
+
+        #Energy in keV. xraydb.mu_elam takes energy in eV, so we multiply by 1000 to convert from keV to eV.
         atten_const = xraydb.mu_elam('Si', energy*1000)*density
-        return self.geos.collecting_area * (1-np.exp(-atten_const * self.geos.detthickness * 0.1)) #The 0.1 is to convert from mm to cm, since the thickness is in mm and the attenuation constant is in cm^-1.
+        return acoll * (1-np.exp(-atten_const * self.geos.detthickness * 0.1)) #The 0.1 is to convert from mm to cm, since the thickness is in mm and the attenuation constant is in cm^-1.
+
+class optics():
+    def __init__(self, thickness, mask=True):
+        self.thickness = thickness
+        self.mask = mask
+
+    @abstractmethod
+    def attenuation(self, energy, transmission):
+        pass #All optics calculations will be made in the subclasses, since they will depend on the mask material.
+
+class lead(optics):
+    def __init__(self, thickness, mask= True):
+        super().__init__(thickness, mask)
+
+    def attenuation(self, energy):
+        density = 11.34   # g/cm3
+        atten_const = xraydb.mu_elam('Pb', energy*1000)*density
+        return np.exp(-atten_const * self.thickness * 0.1) #The 0.1 is to convert from mm to cm, since the thickness is in mm and the attenuation constant is in cm^-1.
+
 
