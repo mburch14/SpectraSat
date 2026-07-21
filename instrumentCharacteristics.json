@@ -3,7 +3,7 @@
     "altitide": 600,//km
     "inclination": 20,//degrees
     "e_min": 15,//kev
-    "e_max": 300,//keV
+    "e_max": 200,//keV
     "config":{
         "detl": 90,//cm
         "detw": 60,//cm

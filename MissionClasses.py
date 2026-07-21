@@ -86,19 +86,13 @@ class CXB(BackgroundModel):
     def photonIntensity(self, energy, fov_sr):
         #Cosmic X-ray background spectrum from Gruber et al. 1999, ApJ, 520, 124
         #In units of photons/cm2/s/sr/keV
-        
-        results = []
-        for e in energy:
-            if 3 < e < 60:
-                test = 7.877 * e**(-0.29) * math.exp(-e / 41.13)
-            elif e >= 60:
-                test = (0.0259 * (e / 60)**(-5.5) + 0.504 * (e / 60)**(-1.58) + 0.0288 * (e / 60)**(-1.05))
-            else:
-                results.append(0)
-                continue
-
-            results.append(fov_sr * test / e)
-        return results
+        C = 10.15e-2
+        EB = 29.99  # keV
+        gamma1 = 1.32
+        gamma2 = 2.88
+        energy = np.asarray(energy)
+        intensity = C / ((energy / EB) ** gamma1 + (energy / EB) ** gamma2)
+        return intensity * fov_sr
 
     def gen_spectrum_table(self, output="cxb_background.dat"):
         energies = self.detector.energy #Gives energy bin midpoints in keV
@@ -116,15 +110,13 @@ class Albedo(BackgroundModel):
     def photonIntensity(self, energy, fov_sr):
         #Albedo spectrum from Ajello et al. 2008, ApJ, 689, 666
         #In units of photons/cm2/s/sr/keV
-        results = []
-        e_B = 33.7  # Break energy in keV
+        EB = 33.7  #in keV
         Gamma1 = -5
         Gamma2 = 1.72
-        const = 1.48e-2 #it is 1.48e-2
-        for e in energy:
-            results.append(fov_sr * const / ((e / e_B)**(Gamma1) + (e / e_B)**(Gamma2)))
-
-        return results
+        const = 1.48e-2
+        energy = np.asarray(energy)
+        intensity = const / ((energy / EB) ** Gamma1 + (energy / EB) ** Gamma2)
+        return intensity * fov_sr
 
 
 class ChargedParticles(BackgroundModel):
