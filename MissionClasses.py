@@ -81,6 +81,22 @@ class BackgroundModel:
     def __init__(self, detector):
         self.detector = detector
 
+    def F_M(self, energy, Mc2, Z, phi):
+        #energy: particle kinetic energy, GeV
+        #Mc2: particle rest mass energy, GeV
+        #Z: charge, unitless
+        #phi: solar modulation factor, GV, 0.55GV at solar minimum, 1.1 for GV at solar maximum
+        return ((energy + Mc2)**2 - Mc2**2)/((energy + abs(Z)*phi + Mc2)**2 - Mc2**2)
+    
+    def geomagnetic_cutoff(self, R, altitude, theta_M, r):
+        R_E = 6371 #km
+        R_cut = (14.5* (1+altitude/R_E)**-2) * (np.cos(theta_M))**-2 #GV
+        return 1/ (1 + (R/R_cut)**-r)
+    
+    def R_E (self, E, mc2, Z):
+        energy = np.asarray(E)
+        pc = np.sqrt((energy + mc2)**2 - mc2**2) #GeV
+        return pc/abs(Z) #GV
 
 class CXB(BackgroundModel):
     def photonIntensity(self, energy, fov_sr):
@@ -120,8 +136,53 @@ class Albedo(BackgroundModel):
 
 
 class ChargedParticles(BackgroundModel):
-    def photonIntensity(self, energy, fov_sr):
+    def __init__(self, detector, inclination, altitude, phi):
+        super().__init__(detector)
+        self.inclination = inclination
+        self.altitude = altitude
+        self.phi = phi
+
+    def totalIntensity(self, fov_sr):
         return 0
+    
+    def protonIntensity(self, fov_sr):
+        #Taken from Background simulations for the Large Area Detector onboard LOFT (Campana et al, 2013)
+        E = np.logspace(-3, 2, 1000)#GeV
+        E_IS = E + self.phi #This is for F(E + Z\psi)
+        M_pc2 = 0.938 #GeV, rest mass energy of a proton
+        R_E = self.R_E(E, M_pc2, 1) #GV, the last is Z, which is 1 for proton
+        R_IS = self.R_E(E_IS, M_pc2, 1)  # for FU
+        C = self.geomagnetic_cutoff(R_E, self.altitude, np.deg2rad(self.inclination/2), r = 12) #unitless; r value is 12 for protons; theta_M is approximated as i/2???
+        F_M = self.F_M(energy=E, Mc2=M_pc2, Z=1, phi=self.phi) #unitless; need to fix phi!!
+        F_U = 1e-7 * 23.9 * R_IS**-2.83 # particles/cm2/s/sr/keV
+        return F_U * F_M * C * fov_sr
+    
+    def electronpositronIntensity(self, fov_sr):
+        #Taken from Background simulations for the Large Area Detector onboard LOFT (Campana et al, 2013)
+        E = np.logspace(-3, 2, 1000)#GeV
+        E_IS = E + self.phi #This is for F(E + Z\psi)
+        M_pc2 = 0.00051 #GeV, electron rest mass energy
+        R_E = self.R_E(E, M_pc2, 1) #GV, the last is Z, which has a magnitude of 1 for electrons and positrons I DO NOT KNOW IF IT IS SUPPOSED TO BE THE ABSOLUTE VALUE OR NOT!!!
+        R_IS = self.R_E(E_IS, M_pc2, 1)  # for FU
+        C = self.geomagnetic_cutoff(R_E, self.altitude, np.deg2rad(self.inclination/2), r = 6) #unitless; r value is 6 for electrons and positrons; theta_M is approximated as i/2???
+        F_M = self.F_M(energy=E, Mc2=M_pc2, Z=1, phi=self.phi) #unitless; need to fix phi!!!
+        F_Uneg = 1e-7 * 0.65 * R_IS**-3.3 # particles/cm2/s/sr/keV
+        F_Upos = 1e-7 * 0.051 * R_IS**-3.3 # particles/cm2/s/sr/keV
+        return (F_Uneg + F_Upos) * F_M * C * fov_sr
+    
+    def alphapartIntensity(self, fov_sr):
+        #Taken from Background simulations for the Large Area Detector onboard LOFT (Campana et al, 2013)
+        E = np.logspace(-3, 2, 1000)#GeV
+        E_IS = E + 2*self.phi #This is for F(E + Z\psi)
+        M_pc2 = 3.727 #GeV, alpha particle (2proton, 2 neuton) rest mass energy
+        R_E = self.R_E(E, M_pc2, 2) #GV, the last is Z, which has a magnitude of 2 for ionized helium
+        R_IS = self.R_E(E_IS, M_pc2, 2)  # for FU
+        C = self.geomagnetic_cutoff(R_E, self.altitude, np.deg2rad(self.inclination/2), r = 12) #unitless; r value is 12 for helium; theta_M is approximated as i/2???
+        F_M = self.F_M(energy=E, Mc2=M_pc2, Z=2, phi=self.phi) #unitless; need to fix phi!!!
+        F_U = 1e-7 * 1.5 * R_IS**-2.7 # particles/cm2/s/sr/keV 
+        return F_U * F_M * C * fov_sr
+    
+
 
 
 class detector(ABC):
